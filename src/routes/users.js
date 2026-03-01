@@ -2,8 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const { getUser, createUser } = require('../models/User');
-const { getActivityByUserId } = require('../services/activityService');
-const { validateActivityParams } = require('../middleware/inputValidation');
+const { getUserActivity } = require('../services/activityService');
+const { validateActivityQuery } = require('../middleware/validateActivityQuery');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
@@ -14,22 +14,47 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** GET /users/:id/activity */
-router.get('/:id/activity', validateActivityParams, async (req, res, next) => {
+/**
+ * GET /users/:id/activity
+ * Retrieves activity events for a specific user with pagination support
+ */
+router.get('/:id/activity', validateActivityQuery, async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { cursor, limit } = req.query;
+    const userId = req.params.id;
+    const { limit, offset, type } = req.query;
     
-    // Check if user exists first
-    const user = await getUser(id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+    // Validate user ID is a valid number
+    const userIdNum = parseInt(userId, 10);
+    if (isNaN(userIdNum) || userIdNum <= 0) {
+      return res.status(400).json({ 
+        error: 'Invalid user ID. Must be a positive integer.' 
+      });
     }
     
-    const activities = await getActivityByUserId(id, { cursor, limit });
-    res.json({ activities });
-  } catch (err) { 
-    next(err); 
+    const activityData = await getUserActivity(userIdNum, {
+      limit,
+      offset,
+      type
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        user_id: userIdNum,
+        activities: activityData.activities,
+        pagination: activityData.pagination
+      }
+    });
+  } catch (error) {
+    // Handle specific error cases
+    if (error.status === 404) {
+      return res.status(404).json({ 
+        error: 'User not found' 
+      });
+    }
+    
+    // Let the error handler deal with other errors
+    next(error);
   }
 });
 
