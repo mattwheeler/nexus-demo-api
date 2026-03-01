@@ -96,16 +96,25 @@ function decodeCursor(cursor) {
     
     // Verify HMAC signature
     if (!verifyHmac(payload, signature)) {
-      throw new CursorError('Invalid cursor signature - cursor may have been tampered with');
+      throw new CursorError('Invalid cursor signature');
     }
     
     // Parse and return the payload
-    return JSON.parse(payload);
+    const cursorPayload = JSON.parse(payload);
+    
+    if (!cursorPayload.created_at || !cursorPayload.id) {
+      throw new CursorError('Invalid cursor payload structure');
+    }
+    
+    return {
+      created_at: cursorPayload.created_at,
+      id: cursorPayload.id
+    };
   } catch (error) {
     if (error instanceof CursorError) {
       throw error;
     }
-    throw new CursorError('Failed to decode cursor');
+    throw new CursorError('Invalid cursor format');
   }
 }
 
