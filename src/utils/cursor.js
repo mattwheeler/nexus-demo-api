@@ -100,15 +100,15 @@ function decodeCursor(cursor) {
     }
     
     // Parse and return the payload
-    const cursorPayload = JSON.parse(payload);
+    const data = JSON.parse(payload);
     
-    if (!cursorPayload.created_at || !cursorPayload.id) {
-      throw new CursorError('Invalid cursor payload structure');
+    if (!data.created_at || !data.id) {
+      throw new CursorError('Malformed cursor payload');
     }
     
     return {
-      created_at: cursorPayload.created_at,
-      id: cursorPayload.id
+      created_at: data.created_at,
+      id: data.id
     };
   } catch (error) {
     if (error instanceof CursorError) {
