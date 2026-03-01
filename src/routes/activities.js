@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
-const { getUserActivities, parsePaginationParams } = require('../services/activityService');
+const { getUserActivities, parsePaginationParams, InvalidCursorError } = require('../services/activityService');
 const { getUser } = require('../models/User');
 
 /**
@@ -31,6 +31,9 @@ router.get('/:userId', async (req, res, next) => {
     
     res.json(result);
   } catch (error) {
+    if (error instanceof InvalidCursorError) {
+      return res.status(400).json({ error: error.message });
+    }
     if (error.message.includes('Limit must be') || error.message.includes('Valid user ID')) {
       return res.status(400).json({ error: error.message });
     }
