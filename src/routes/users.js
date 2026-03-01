@@ -13,16 +13,6 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** POST /users */
-router.post('/', async (req, res, next) => {
-  try {
-    const { name, email } = req.body;
-    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
-    const user = await createUser({ name, email });
-    res.status(201).json({ user });
-  } catch (err) { next(err); }
-});
-
 /** GET /users/:id/activity */
 router.get('/:id/activity', async (req, res, next) => {
   try {
@@ -40,21 +30,42 @@ router.get('/:id/activity', async (req, res, next) => {
     }
     
     // Parse pagination parameters
-    const paginationOptions = parsePaginationParams(req.query);
+    let paginationOptions;
+    try {
+      paginationOptions = parsePaginationParams(req.query);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
     
-    // Fetch activities
+    // Get activities
     const result = await getUserActivities(userId, paginationOptions);
     
-    res.json(result);
+    // Return response in expected format
+    res.json({
+      activities: result.activities,
+      pagination: {
+        limit: result.limit,
+        hasNext: result.hasNext,
+        nextCursor: result.nextCursor
+      }
+    });
+    
   } catch (error) {
     if (error instanceof InvalidCursorError) {
       return res.status(400).json({ error: error.message });
     }
-    if (error.message.includes('Limit must be') || error.message.includes('Valid user ID')) {
-      return res.status(400).json({ error: error.message });
-    }
     next(error);
   }
+});
+
+/** POST /users */
+router.post('/', async (req, res, next) => {
+  try {
+    const { name, email } = req.body;
+    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+    const user = await createUser({ name, email });
+    res.status(201).json({ user });
+  } catch (err) { next(err); }
 });
 
 module.exports = { usersRouter: router };
