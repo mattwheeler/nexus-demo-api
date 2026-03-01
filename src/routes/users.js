@@ -1,64 +1,57 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
-const { getUser, createUser } = require('../models/User');
-const { getUserActivities } = require('../models/Activity');
-const { validateActivityQuery } = require('../middleware/validateActivityQuery');
+const { getUser, createUser, getUserActivities } = require('../models/User');
+const { validateRequest } = require('../middleware/validateRequest');
+const { ensureUserExists, validateRequiredFields, validatePaginationParams } = require('../utils/errorHelpers');
+const { UserNotFoundError, BadRequestError } = require('../errors/AppError');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
   try {
-    const user = await getUser(req.params.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const userId = req.params.id;
+    
+    // Validate user ID format
+    if (!userId || isNaN(parseInt(userId, 10))) {
+      throw new BadRequestError('Invalid user ID format');
+    }
+    
+    const user = await getUser(userId);
+    ensureUserExists(user, userId);
+    
     res.json({ user });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    next(err); 
+  }
 });
 
-/**
- * GET /users/:id/activity
- * Get user activities with pagination support
- */
-router.get('/:id/activity', validateActivityQuery, async (req, res, next) => {
+/** GET /users/:id/activity */
+router.get('/:id/activity', async (req, res, next) => {
   try {
-    const userId = parseInt(req.params.id, 10);
+    const userId = req.params.id;
     
-    // Validate user ID is a valid number
-    if (isNaN(userId) || userId <= 0) {
-      return res.status(400).json({ error: 'Invalid user ID' });
+    // Validate user ID format
+    if (!userId || isNaN(parseInt(userId, 10))) {
+      throw new BadRequestError('Invalid user ID format');
     }
     
-    // Check if user exists
+    // First check if user exists
     const user = await getUser(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    ensureUserExists(user, userId);
     
-    // Get user activities with pagination
-    const result = await getUserActivities(userId, {
-      limit: req.query.limit,
-      cursor: req.query.cursor,
-      type: req.query.type
+    // Validate pagination parameters
+    const { limit, cursor, offset } = req.query;
+    validatePaginationParams({ limit, cursor, offset });
+    
+    // Get user activities with validated parameters
+    const activities = await getUserActivities(userId, {
+      limit: limit ? parseInt(limit, 10) : 10,
+      cursor,
+      offset: offset ? parseInt(offset, 10) : 0
     });
     
-    // Format response
-    const response = {
-      activities: result.activities,
-      pagination: {
-        limit: result.pagination.limit,
-        hasMore: result.pagination.hasMore
-      }
-    };
-    
-    // Include next cursor only if there are more results
-    if (result.pagination.nextCursor) {
-      response.pagination.nextCursor = result.pagination.nextCursor;
-    }
-    
-    res.json(response);
-    
+    res.json({ activities });
   } catch (err) {
-    // Handle database errors with 500 status
-    err.status = 500;
     next(err);
   }
 });
@@ -66,11 +59,16 @@ router.get('/:id/activity', validateActivityQuery, async (req, res, next) => {
 /** POST /users */
 router.post('/', async (req, res, next) => {
   try {
+    // Validate required fields
+    validateRequiredFields(req.body, ['name', 'email']);
+    
     const { name, email } = req.body;
-    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
     const user = await createUser({ name, email });
+    
     res.status(201).json({ user });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    next(err); 
+  }
 });
 
 module.exports = { usersRouter: router };
