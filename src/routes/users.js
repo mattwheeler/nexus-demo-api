@@ -2,117 +2,58 @@
 const express = require('express');
 const router = express.Router();
 const { getUser, createUser } = require('../models/User');
-const { getActivitiesForUser } = require('../services/activityService');
-const { validatePaginationParams } = require('../middleware/validatePagination');
+const { getUserActivities, parsePaginationParams, InvalidCursorError } = require('../services/activityService');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
   try {
-    const userId = req.params.id;
-    
-    // Validate user ID is a number
-    if (!/^\d+$/.test(userId)) {
-      return res.status(400).json({
-        error: 'Invalid user ID',
-        message: 'User ID must be a valid number'
-      });
-    }
-    
-    const user = await getUser(userId);
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        message: `User with ID ${userId} does not exist`
-      });
-    }
-    
+    const user = await getUser(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ user });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 /** POST /users */
 router.post('/', async (req, res, next) => {
   try {
     const { name, email } = req.body;
-    
-    if (!name || !email) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        message: 'Both name and email are required'
-      });
-    }
-    
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        error: 'Invalid email format',
-        message: 'Please provide a valid email address'
-      });
-    }
-    
+    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
     const user = await createUser({ name, email });
     res.status(201).json({ user });
-  } catch (err) {
-    // Handle unique constraint violation for email
-    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({
-        error: 'Email already exists',
-        message: 'A user with this email address already exists'
-      });
-    }
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
-/**
- * GET /users/:id/activity
- * Retrieve paginated activity events for a specific user
- */
-router.get('/:id/activity', validatePaginationParams, async (req, res, next) => {
+/** GET /users/:id/activity */
+router.get('/:id/activity', async (req, res, next) => {
   try {
-    const userId = req.params.id;
+    const userId = parseInt(req.params.id, 10);
     
-    // Validate user ID is a number
-    if (!/^\d+$/.test(userId)) {
-      return res.status(400).json({
-        error: 'Invalid user ID',
-        message: 'User ID must be a valid number'
-      });
+    // Validate user ID
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
     }
     
     // Check if user exists
     const user = await getUser(userId);
     if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        message: `User with ID ${userId} does not exist`
-      });
+      return res.status(404).json({ error: 'User not found' });
     }
     
-    const { limit, cursor } = req.query;
-    const result = await getActivitiesForUser(userId, { limit, cursor });
+    // Parse pagination parameters
+    const paginationOptions = parsePaginationParams(req.query);
     
-    res.json({
-      activities: result.activities,
-      pagination: {
-        limit: result.limit,
-        hasNext: result.hasNext,
-        nextCursor: result.nextCursor
-      }
-    });
-  } catch (err) {
-    // Handle specific cursor validation errors
-    if (err.name === 'InvalidCursorError') {
-      return res.status(400).json({
-        error: 'Invalid cursor',
-        message: err.message
-      });
+    // Fetch activities
+    const result = await getUserActivities(userId, paginationOptions);
+    
+    res.json(result);
+  } catch (error) {
+    if (error instanceof InvalidCursorError) {
+      return res.status(400).json({ error: error.message });
     }
-    
-    next(err);
+    if (error.message.includes('Limit must be') || error.message.includes('Valid user ID')) {
+      return res.status(400).json({ error: error.message });
+    }
+    next(error);
   }
 });
 
