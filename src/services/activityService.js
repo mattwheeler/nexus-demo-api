@@ -1,163 +1,170 @@
 'use strict';
-const { UserNotFoundError, InvalidCursorError, DatabaseError } = require('../errors/AppError');
-const { getUser } = require('../models/User');
-const Database = require('better-sqlite3');
-const path = require('path');
-
-const db = new Database(path.join(__dirname, '../../demo.db'));
+const { v4: uuidv4 } = require('uuid');
+const { ACTIVITY_TYPES } = require('../types/activity');
 
 /**
- * Activity service with comprehensive error handling
+ * Activity service for managing user activity events
  */
 class ActivityService {
-  /**
-   * Get user activity with pagination
-   * @param {string|number} userId - User ID
-   * @param {Object} options - Pagination options
-   * @param {string} [options.cursor] - Pagination cursor
-   * @param {number} [options.limit=20] - Number of items per page
-   * @returns {Promise<Object>} Activity data with pagination info
-   * @throws {UserNotFoundError} When user doesn't exist
-   * @throws {InvalidCursorError} When cursor is invalid
-   * @throws {DatabaseError} When database operation fails
-   */
-  async getUserActivity(userId, { cursor, limit = 20 } = {}) {
-    try {
-      // Validate user exists
-      const user = await getUser(userId);
-      if (!user) {
-        throw new UserNotFoundError(userId);
-      }
-
-      // Validate and parse cursor
-      let cursorId = null;
-      if (cursor) {
-        cursorId = this._parseCursor(cursor);
-      }
-
-      // Validate limit
-      const parsedLimit = this._validateLimit(limit);
-
-      // Get activities with error handling
-      const activities = await this._getActivitiesFromDb(userId, cursorId, parsedLimit);
-      
-      // Generate pagination info
-      const pagination = this._generatePagination(activities, parsedLimit);
-
-      return {
-        activities: activities.slice(0, parsedLimit), // Remove extra item used for hasNext check
-        pagination,
-        user: {
-          id: user.id,
-          name: user.name
-        }
-      };
-    } catch (error) {
-      // Re-throw known errors
-      if (error instanceof UserNotFoundError || 
-          error instanceof InvalidCursorError || 
-          error instanceof DatabaseError) {
-        throw error;
-      }
-      
-      // Wrap unexpected errors
-      throw new DatabaseError('Failed to fetch user activity', error);
-    }
+  constructor() {
+    // In-memory storage for demo purposes
+    // In production, this would use a database
+    this.activities = new Map();
+    this.userActivities = new Map(); // userId -> Set of activity IDs
   }
 
   /**
-   * Parse and validate cursor
-   * @private
-   * @param {string} cursor - Base64 encoded cursor
-   * @returns {number} Parsed cursor ID
-   * @throws {InvalidCursorError} When cursor is invalid
+   * Create a new activity event
+   * @param {Object} activityData - Activity event data
+   * @param {string} activityData.userId - User ID
+   * @param {string} activityData.type - Activity type
+   * @param {string} activityData.description - Activity description
+   * @param {Object} [activityData.metadata] - Additional metadata
+   * @returns {Promise<Object>} Created activity event
    */
-  _parseCursor(cursor) {
-    try {
-      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
-      const cursorId = parseInt(decoded, 10);
-      
-      if (isNaN(cursorId) || cursorId <= 0) {
-        throw new InvalidCursorError(cursor);
-      }
-      
-      return cursorId;
-    } catch (error) {
-      if (error instanceof InvalidCursorError) {
-        throw error;
-      }
-      throw new InvalidCursorError(cursor);
-    }
-  }
-
-  /**
-   * Validate limit parameter
-   * @private
-   * @param {number|string} limit - Limit value
-   * @returns {number} Validated limit
-   */
-  _validateLimit(limit) {
-    const parsedLimit = parseInt(limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 100) {
-      return 20; // Default limit
-    }
-    return parsedLimit;
-  }
-
-  /**
-   * Get activities from database with error handling
-   * @private
-   * @param {number} userId - User ID
-   * @param {number|null} cursorId - Cursor ID
-   * @param {number} limit - Limit
-   * @returns {Promise<Array>} Activities
-   * @throws {DatabaseError} When database operation fails
-   */
-  async _getActivitiesFromDb(userId, cursorId, limit) {
-    try {
-      let query = `
-        SELECT id, type, description, created_at 
-        FROM activity_events 
-        WHERE user_id = ?
-      `;
-      let params = [userId];
-
-      if (cursorId) {
-        query += ' AND id < ?';
-        params.push(cursorId);
-      }
-
-      query += ' ORDER BY id DESC LIMIT ?';
-      params.push(limit + 1); // Get one extra to check if there are more
-
-      const stmt = db.prepare(query);
-      const activities = stmt.all(...params);
-      
-      return Promise.resolve(activities);
-    } catch (error) {
-      throw new DatabaseError('Failed to query activity events', error);
-    }
-  }
-
-  /**
-   * Generate pagination information
-   * @private
-   * @param {Array} activities - Activities array
-   * @param {number} limit - Original limit
-   * @returns {Object} Pagination info
-   */
-  _generatePagination(activities, limit) {
-    const hasNext = activities.length > limit;
-    const nextCursor = hasNext && activities.length > 0 
-      ? Buffer.from(activities[limit - 1].id.toString()).toString('base64')
-      : null;
-
-    return {
-      hasNext,
-      nextCursor,
-      limit
+  async createActivity({ userId, type, description, metadata = {} }) {
+    const id = uuidv4();
+    const timestamp = new Date().toISOString();
+    
+    const activity = {
+      id,
+      userId,
+      type,
+      description,
+      timestamp,
+      metadata
     };
+    
+    this.activities.set(id, activity);
+    
+    // Add to user's activity list
+    if (!this.userActivities.has(userId)) {
+      this.userActivities.set(userId, new Set());
+    }
+    this.userActivities.get(userId).add(id);
+    
+    return activity;
+  }
+
+  /**
+   * Get activities with pagination and filtering
+   * @param {Object} options - Query options
+   * @param {string} [options.userId] - Filter by user ID
+   * @param {string} [options.type] - Filter by activity type
+   * @param {number} [options.limit=20] - Maximum results per page
+   * @param {string} [options.cursor] - Pagination cursor
+   * @param {string} [options.startDate] - Start date filter
+   * @param {string} [options.endDate] - End date filter
+   * @returns {Promise<Object>} Paginated activity results
+   */
+  async getActivities({
+    userId,
+    type,
+    limit = 20,
+    cursor,
+    startDate,
+    endDate
+  } = {}) {
+    let activities = Array.from(this.activities.values());
+    
+    // Apply filters
+    if (userId) {
+      activities = activities.filter(a => a.userId === userId);
+    }
+    
+    if (type) {
+      activities = activities.filter(a => a.type === type);
+    }
+    
+    if (startDate) {
+      const start = new Date(startDate);
+      activities = activities.filter(a => new Date(a.timestamp) >= start);
+    }
+    
+    if (endDate) {
+      const end = new Date(endDate);
+      activities = activities.filter(a => new Date(a.timestamp) <= end);
+    }
+    
+    // Sort by timestamp (newest first)
+    activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Apply cursor-based pagination
+    let startIndex = 0;
+    if (cursor) {
+      const cursorActivity = activities.find(a => a.id === cursor);
+      if (cursorActivity) {
+        startIndex = activities.indexOf(cursorActivity) + 1;
+      }
+    }
+    
+    const paginatedActivities = activities.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + limit < activities.length;
+    const nextCursor = hasMore && paginatedActivities.length > 0 
+      ? paginatedActivities[paginatedActivities.length - 1].id 
+      : undefined;
+    
+    return {
+      data: paginatedActivities,
+      pagination: {
+        hasMore,
+        nextCursor,
+        total: activities.length
+      }
+    };
+  }
+
+  /**
+   * Get a single activity by ID
+   * @param {string} id - Activity ID
+   * @returns {Promise<Object|null>} Activity event or null if not found
+   */
+  async getActivity(id) {
+    return this.activities.get(id) || null;
+  }
+
+  /**
+   * Delete an activity event
+   * @param {string} id - Activity ID
+   * @returns {Promise<boolean>} True if deleted, false if not found
+   */
+  async deleteActivity(id) {
+    const activity = this.activities.get(id);
+    if (!activity) {
+      return false;
+    }
+    
+    this.activities.delete(id);
+    
+    // Remove from user's activity list
+    const userActivities = this.userActivities.get(activity.userId);
+    if (userActivities) {
+      userActivities.delete(id);
+    }
+    
+    return true;
+  }
+
+  /**
+   * Get activity count for a user
+   * @param {string} userId - User ID
+   * @returns {Promise<number>} Number of activities for the user
+   */
+  async getUserActivityCount(userId) {
+    const userActivitySet = this.userActivities.get(userId);
+    return userActivitySet ? userActivitySet.size : 0;
+  }
+
+  /**
+   * Clear all activities (for testing)
+   * @returns {Promise<void>}
+   */
+  async clearAllActivities() {
+    this.activities.clear();
+    this.userActivities.clear();
   }
 }
 
-module.exports = { ActivityService };
+// Export singleton instance
+const activityService = new ActivityService();
+module.exports = { activityService, ActivityService };
