@@ -1,110 +1,163 @@
 'use strict';
+const { UserNotFoundError, InvalidCursorError, DatabaseError } = require('../errors/AppError');
+const { getUser } = require('../models/User');
 const Database = require('better-sqlite3');
 const path = require('path');
 
 const db = new Database(path.join(__dirname, '../../demo.db'));
 
 /**
- * Activity service for managing user activity events
+ * Activity service with comprehensive error handling
  */
 class ActivityService {
   /**
-   * Get paginated activity events for a user
-   * 
-   * @param {number|string} userId - User ID
+   * Get user activity with pagination
+   * @param {string|number} userId - User ID
    * @param {Object} options - Pagination options
-   * @param {number} options.limit - Number of events to return (default: 10, max: 50)
-   * @param {string|null} options.cursor - Pagination cursor for next page
-   * @returns {Promise<Object>} Paginated activity events with metadata
+   * @param {string} [options.cursor] - Pagination cursor
+   * @param {number} [options.limit=20] - Number of items per page
+   * @returns {Promise<Object>} Activity data with pagination info
+   * @throws {UserNotFoundError} When user doesn't exist
+   * @throws {InvalidCursorError} When cursor is invalid
+   * @throws {DatabaseError} When database operation fails
    */
-  async getUserActivity(userId, { limit = 10, cursor = null } = {}) {
-    let query = `
-      SELECT id, user_id, type, description, created_at
-      FROM activity_events
-      WHERE user_id = ?
-    `;
-    
-    const params = [userId];
-    
-    // Handle cursor-based pagination
-    if (cursor) {
-      try {
-        const decodedCursor = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
-        if (decodedCursor.id) {
-          query += ' AND id < ?';
-          params.push(decodedCursor.id);
+  async getUserActivity(userId, { cursor, limit = 20 } = {}) {
+    try {
+      // Validate user exists
+      const user = await getUser(userId);
+      if (!user) {
+        throw new UserNotFoundError(userId);
+      }
+
+      // Validate and parse cursor
+      let cursorId = null;
+      if (cursor) {
+        cursorId = this._parseCursor(cursor);
+      }
+
+      // Validate limit
+      const parsedLimit = this._validateLimit(limit);
+
+      // Get activities with error handling
+      const activities = await this._getActivitiesFromDb(userId, cursorId, parsedLimit);
+      
+      // Generate pagination info
+      const pagination = this._generatePagination(activities, parsedLimit);
+
+      return {
+        activities: activities.slice(0, parsedLimit), // Remove extra item used for hasNext check
+        pagination,
+        user: {
+          id: user.id,
+          name: user.name
         }
-      } catch (error) {
-        throw new Error('Invalid cursor format');
+      };
+    } catch (error) {
+      // Re-throw known errors
+      if (error instanceof UserNotFoundError || 
+          error instanceof InvalidCursorError || 
+          error instanceof DatabaseError) {
+        throw error;
       }
+      
+      // Wrap unexpected errors
+      throw new DatabaseError('Failed to fetch user activity', error);
     }
-    
-    query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
-    params.push(limit + 1); // Fetch one extra to determine if there are more pages
-    
-    const events = db.prepare(query).all(...params);
-    
-    const hasMore = events.length > limit;
-    if (hasMore) {
-      events.pop(); // Remove the extra event
+  }
+
+  /**
+   * Parse and validate cursor
+   * @private
+   * @param {string} cursor - Base64 encoded cursor
+   * @returns {number} Parsed cursor ID
+   * @throws {InvalidCursorError} When cursor is invalid
+   */
+  _parseCursor(cursor) {
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const cursorId = parseInt(decoded, 10);
+      
+      if (isNaN(cursorId) || cursorId <= 0) {
+        throw new InvalidCursorError(cursor);
+      }
+      
+      return cursorId;
+    } catch (error) {
+      if (error instanceof InvalidCursorError) {
+        throw error;
+      }
+      throw new InvalidCursorError(cursor);
     }
-    
-    // Generate next cursor if there are more events
-    let nextCursor = null;
-    if (hasMore && events.length > 0) {
-      const lastEvent = events[events.length - 1];
-      nextCursor = Buffer.from(JSON.stringify({ id: lastEvent.id })).toString('base64');
+  }
+
+  /**
+   * Validate limit parameter
+   * @private
+   * @param {number|string} limit - Limit value
+   * @returns {number} Validated limit
+   */
+  _validateLimit(limit) {
+    const parsedLimit = parseInt(limit, 10);
+    if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 100) {
+      return 20; // Default limit
     }
-    
+    return parsedLimit;
+  }
+
+  /**
+   * Get activities from database with error handling
+   * @private
+   * @param {number} userId - User ID
+   * @param {number|null} cursorId - Cursor ID
+   * @param {number} limit - Limit
+   * @returns {Promise<Array>} Activities
+   * @throws {DatabaseError} When database operation fails
+   */
+  async _getActivitiesFromDb(userId, cursorId, limit) {
+    try {
+      let query = `
+        SELECT id, type, description, created_at 
+        FROM activity_events 
+        WHERE user_id = ?
+      `;
+      let params = [userId];
+
+      if (cursorId) {
+        query += ' AND id < ?';
+        params.push(cursorId);
+      }
+
+      query += ' ORDER BY id DESC LIMIT ?';
+      params.push(limit + 1); // Get one extra to check if there are more
+
+      const stmt = db.prepare(query);
+      const activities = stmt.all(...params);
+      
+      return Promise.resolve(activities);
+    } catch (error) {
+      throw new DatabaseError('Failed to query activity events', error);
+    }
+  }
+
+  /**
+   * Generate pagination information
+   * @private
+   * @param {Array} activities - Activities array
+   * @param {number} limit - Original limit
+   * @returns {Object} Pagination info
+   */
+  _generatePagination(activities, limit) {
+    const hasNext = activities.length > limit;
+    const nextCursor = hasNext && activities.length > 0 
+      ? Buffer.from(activities[limit - 1].id.toString()).toString('base64')
+      : null;
+
     return {
-      events,
-      pagination: {
-        limit,
-        hasMore,
-        nextCursor
-      }
+      hasNext,
+      nextCursor,
+      limit
     };
   }
-  
-  /**
-   * Create a new activity event for a user
-   * 
-   * @param {number|string} userId - User ID
-   * @param {Object} eventData - Event data
-   * @param {string} eventData.type - Event type
-   * @param {string} [eventData.description] - Event description
-   * @returns {Promise<Object>} Created activity event
-   */
-  async createActivity(userId, { type, description = null }) {
-    const result = db.prepare(`
-      INSERT INTO activity_events (user_id, type, description)
-      VALUES (?, ?, ?)
-    `).run(userId, type, description);
-    
-    return db.prepare(`
-      SELECT id, user_id, type, description, created_at
-      FROM activity_events
-      WHERE id = ?
-    `).get(result.lastInsertRowid);
-  }
 }
 
-// Singleton instance
-let activityServiceInstance = null;
-
-/**
- * Get the activity service instance (singleton)
- * 
- * @returns {ActivityService} Activity service instance
- */
-function getActivityService() {
-  if (!activityServiceInstance) {
-    activityServiceInstance = new ActivityService();
-  }
-  return activityServiceInstance;
-}
-
-module.exports = {
-  ActivityService,
-  getActivityService
-};
+module.exports = { ActivityService };
