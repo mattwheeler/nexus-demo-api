@@ -1,75 +1,46 @@
 'use strict';
-const { getActivitiesForUser, generateCursor } = require('../models/Activity');
+const Database = require('better-sqlite3');
+const path = require('path');
+
+const db = new Database(path.join(__dirname, '../../demo.db'));
 
 /**
- * Retrieve activities for a user with cursor-based pagination
- * @param {number} userId - User ID to fetch activities for
- * @param {Object} options - Pagination options
- * @param {string} [options.cursor] - Cursor token for pagination
- * @param {number} [options.limit=10] - Number of activities to fetch (default: 10)
- * @returns {Promise<Object>} Object containing activities and pagination metadata
+ * Retrieves activity events for a specific user with pagination support
+ * @param {number} userId - The user ID to fetch activities for
+ * @param {Object} options - Query options
+ * @param {string} [options.cursor] - Pagination cursor (ISO date string)
+ * @param {number} [options.limit=10] - Maximum number of results to return
+ * @returns {Promise<Array>} Array of activity events
  */
-async function getUserActivities(userId, { cursor, limit = 10 } = {}) {
-  // Validate inputs
-  if (!userId || typeof userId !== 'number') {
-    throw new Error('Valid user ID is required');
+async function getActivityByUserId(userId, options = {}) {
+  const { cursor, limit = 10 } = options;
+  
+  let query = `
+    SELECT id, user_id, type, description, created_at 
+    FROM activity_events 
+    WHERE user_id = ?
+  `;
+  
+  const params = [userId];
+  
+  // Add cursor-based pagination
+  if (cursor) {
+    query += ' AND created_at < ?';
+    params.push(cursor);
   }
   
-  if (limit && (typeof limit !== 'number' || limit < 1 || limit > 100)) {
-    throw new Error('Limit must be a number between 1 and 100');
-  }
-
-  // Fetch one extra record to determine if there are more results
-  const fetchLimit = limit + 1;
-  const activities = await getActivitiesForUser(userId, { cursor, limit: fetchLimit });
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(limit);
   
-  // Check if there are more results
-  const hasNext = activities.length > limit;
-  const results = hasNext ? activities.slice(0, limit) : activities;
+  const stmt = db.prepare(query);
+  const activities = stmt.all(...params);
   
-  // Generate next cursor from the last item's timestamp
-  let nextCursor = null;
-  if (hasNext && results.length > 0) {
-    const lastActivity = results[results.length - 1];
-    nextCursor = generateCursor(lastActivity.created_at);
-  }
-  
-  return {
-    activities: results,
-    pagination: {
-      hasNext,
-      cursor: nextCursor,
-      limit
-    }
-  };
-}
-
-/**
- * Validate and parse pagination parameters from request
- * @param {Object} query - Request query parameters
- * @param {string} [query.cursor] - Cursor token
- * @param {string} [query.limit] - Limit as string
- * @returns {Object} Parsed pagination options
- */
-function parsePaginationParams(query) {
-  const options = {};
-  
-  if (query.cursor) {
-    options.cursor = query.cursor;
-  }
-  
-  if (query.limit) {
-    const limit = parseInt(query.limit, 10);
-    if (isNaN(limit) || limit < 1 || limit > 100) {
-      throw new Error('Limit must be a number between 1 and 100');
-    }
-    options.limit = limit;
-  }
-  
-  return options;
+  return Promise.resolve(activities.map(activity => ({
+    ...activity,
+    user_id: parseInt(activity.user_id, 10)
+  })));
 }
 
 module.exports = {
-  getUserActivities,
-  parsePaginationParams
+  getActivityByUserId
 };
