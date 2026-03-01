@@ -1,0 +1,212 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.example.com/schemas/activity-event.json",
+  "title": "Activity Event Schema",
+  "description": "Schema for activity events in the system",
+  "type": "object",
+  "required": ["id", "version", "type", "timestamp", "actor", "recordedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this activity event"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "default": "1.0.0",
+      "description": "Schema version for backward compatibility and migration purposes"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*\\.[a-z][a-z0-9]*$",
+      "description": "Type of activity that occurred (e.g., 'user.created', 'document.updated')"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the activity occurred"
+    },
+    "actor": {
+      "$ref": "#/definitions/ActivityActor",
+      "description": "The actor who performed this activity"
+    },
+    "subject": {
+      "$ref": "#/definitions/ActivitySubject",
+      "description": "Optional subject of the activity (what the activity is about)"
+    },
+    "target": {
+      "$ref": "#/definitions/ActivityTarget",
+      "description": "Optional target of the activity (what is being acted upon)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the activity"
+    },
+    "metadata": {
+      "$ref": "#/definitions/ActivityMetadata",
+      "description": "Additional metadata associated with this event"
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when this event was recorded in the system"
+    }
+  },
+  "definitions": {
+    "ActivityActor": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique identifier for the actor"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["user", "system", "service", "api"],
+          "description": "Type of actor (user, system, service, etc.)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name or identifier for the actor"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address if the actor is a user"
+        }
+      }
+    },
+    "ActivitySubject": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique identifier for the subject"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type of subject (user, document, project, etc.)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name or title of the subject"
+        },
+        "properties": {
+          "type": "object",
+          "description": "Additional properties specific to the subject type"
+        }
+      }
+    },
+    "ActivityTarget": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique identifier for the target"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type of target (file, folder, comment, etc.)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name or title of the target"
+        },
+        "properties": {
+          "type": "object",
+          "description": "Additional properties specific to the target type"
+        }
+      }
+    },
+    "ActivityMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ipAddress": {
+          "type": "string",
+          "oneOf": [
+            {"format": "ipv4"},
+            {"format": "ipv6"}
+          ],
+          "description": "IP address of the actor when the activity occurred"
+        },
+        "userAgent": {
+          "type": "string",
+          "description": "User agent string if the activity came from a browser"
+        },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "country": {
+              "type": "string",
+              "description": "Country code or name"
+            },
+            "region": {
+              "type": "string",
+              "description": "Region, state, or province"
+            },
+            "city": {
+              "type": "string",
+              "description": "City name"
+            }
+          },
+          "description": "Geographic location information"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Session identifier"
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Request identifier for tracing"
+        },
+        "custom": {
+          "type": "object",
+          "description": "Additional custom properties"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "evt_123456789",
+      "version": "1.0.0",
+      "type": "user.created",
+      "timestamp": "2024-01-15T10:30:00.000Z",
+      "actor": {
+        "id": "sys_admin",
+        "type": "system",
+        "name": "System Administrator"
+      },
+      "subject": {
+        "id": "user_456",
+        "type": "user",
+        "name": "John Doe",
+        "properties": {
+          "email": "john.doe@example.com"
+        }
+      },
+      "description": "New user account created",
+      "metadata": {
+        "ipAddress": "192.168.1.100",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "requestId": "req_abc123"
+      },
+      "recordedAt": "2024-01-15T10:30:01.234Z"
+    }
+  ]
+}
