@@ -1,46 +1,116 @@
 'use strict';
+const crypto = require('crypto');
 
 /**
- * Encodes cursor data into a base64 string
- * @param {Object} data - The cursor data to encode
- * @param {string} data.created_at - The created_at timestamp
- * @param {number} data.id - The record id
- * @returns {string} Base64 encoded cursor
+ * Utility functions for encoding and decoding pagination cursors
+ * with HMAC signing for security
  */
-function encodeCursor(data) {
-  const cursorData = {
-    created_at: data.created_at,
-    id: data.id
-  };
-  return Buffer.from(JSON.stringify(cursorData)).toString('base64');
-}
+
+// Get HMAC secret from environment or use default for development
+const HMAC_SECRET = process.env.CURSOR_HMAC_SECRET || 'dev-secret-change-in-production';
+const HMAC_ALGORITHM = 'sha256';
 
 /**
- * Decodes a base64 cursor string back to cursor data
- * @param {string} cursor - The base64 encoded cursor
- * @returns {Object|null} Decoded cursor data or null if invalid
- * @returns {string} returns.created_at - The created_at timestamp
- * @returns {number} returns.id - The record id
+ * Custom error class for cursor-related errors
  */
-function decodeCursor(cursor) {
-  try {
-    if (!cursor || typeof cursor !== 'string') {
-      return null;
-    }
-    const decoded = Buffer.from(cursor, 'base64').toString('utf8');
-    const data = JSON.parse(decoded);
-    
-    if (!data.created_at || !data.id) {
-      return null;
-    }
-    
-    return {
-      created_at: data.created_at,
-      id: Number(data.id)
-    };
-  } catch (err) {
-    return null;
+class CursorError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'CursorError';
   }
 }
 
-module.exports = { encodeCursor, decodeCursor };
+/**
+ * Creates an HMAC signature for the given data
+ * @param {string} data - The data to sign
+ * @returns {string} The HMAC signature
+ */
+function createHmac(data) {
+  return crypto.createHmac(HMAC_ALGORITHM, HMAC_SECRET)
+    .update(data)
+    .digest('hex');
+}
+
+/**
+ * Verifies an HMAC signature
+ * @param {string} data - The original data
+ * @param {string} signature - The signature to verify
+ * @returns {boolean} True if signature is valid
+ */
+function verifyHmac(data, signature) {
+  const expectedSignature = createHmac(data);
+  return crypto.timingSafeEqual(
+    Buffer.from(signature, 'hex'),
+    Buffer.from(expectedSignature, 'hex')
+  );
+}
+
+/**
+ * Encodes a cursor containing (created_at, id) pair with HMAC signing
+ * @param {string|Date} createdAt - The created_at timestamp
+ * @param {number|string} id - The record ID
+ * @returns {string} Base64 encoded cursor with HMAC signature
+ */
+function encodeCursor(createdAt, id) {
+  if (createdAt == null || id == null) {
+    throw new CursorError('Both createdAt and id are required for cursor encoding');
+  }
+
+  // Normalize createdAt to ISO string
+  const timestamp = createdAt instanceof Date ? createdAt.toISOString() : createdAt;
+  
+  // Create the cursor payload
+  const payload = JSON.stringify({ created_at: timestamp, id: String(id) });
+  
+  // Create HMAC signature
+  const signature = createHmac(payload);
+  
+  // Combine payload and signature
+  const cursorData = JSON.stringify({ payload, signature });
+  
+  // Base64 encode the entire cursor
+  return Buffer.from(cursorData, 'utf8').toString('base64');
+}
+
+/**
+ * Decodes a cursor and verifies its HMAC signature
+ * @param {string} cursor - The base64 encoded cursor
+ * @returns {{created_at: string, id: string}} The decoded cursor data
+ * @throws {CursorError} If cursor is invalid or tampered with
+ */
+function decodeCursor(cursor) {
+  if (!cursor || typeof cursor !== 'string') {
+    throw new CursorError('Invalid cursor format');
+  }
+
+  try {
+    // Decode base64
+    const cursorData = Buffer.from(cursor, 'base64').toString('utf8');
+    
+    // Parse cursor structure
+    const { payload, signature } = JSON.parse(cursorData);
+    
+    if (!payload || !signature) {
+      throw new CursorError('Malformed cursor structure');
+    }
+    
+    // Verify HMAC signature
+    if (!verifyHmac(payload, signature)) {
+      throw new CursorError('Invalid cursor signature - cursor may have been tampered with');
+    }
+    
+    // Parse and return the payload
+    return JSON.parse(payload);
+  } catch (error) {
+    if (error instanceof CursorError) {
+      throw error;
+    }
+    throw new CursorError('Failed to decode cursor');
+  }
+}
+
+module.exports = {
+  encodeCursor,
+  decodeCursor,
+  CursorError
+};
