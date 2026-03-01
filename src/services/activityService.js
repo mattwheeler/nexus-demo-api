@@ -25,8 +25,11 @@ function parsePaginationParams(query = {}) {
   // Parse limit
   if (limit !== undefined) {
     const parsedLimit = parseInt(limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 100) {
-      throw new Error('Limit must be between 1 and 100');
+    if (isNaN(parsedLimit) || parsedLimit <= 0) {
+      throw new Error('Limit must be a positive integer');
+    }
+    if (parsedLimit > 100) {
+      throw new Error('Limit cannot exceed 100');
     }
     options.limit = parsedLimit;
   }
