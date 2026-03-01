@@ -1,73 +1,83 @@
 'use strict';
-const Database = require('better-sqlite3');
-const path = require('path');
-const { getUser } = require('../models/User');
-
-const db = new Database(path.join(__dirname, '../../demo.db'));
+const { getActivities } = require('../models/Activity');
 
 /**
- * Retrieves activity events for a specific user with pagination
- * @param {string|number} userId - The user ID
- * @param {Object} options - Query options
- * @param {number} options.limit - Number of events to return (default: 20, max: 100)
- * @param {number} options.offset - Number of events to skip (default: 0)
- * @param {string} [options.type] - Filter by event type
- * @returns {Promise<Object>} Activity data with pagination info
- * @throws {Error} When user not found or database error
+ * Custom error class for invalid cursor tokens
  */
-async function getUserActivity(userId, options = {}) {
-  const { limit = 20, offset = 0, type } = options;
-  
-  // First check if user exists
-  const user = await getUser(userId);
-  if (!user) {
-    const error = new Error('User not found');
-    error.status = 404;
-    throw error;
+class InvalidCursorError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'InvalidCursorError';
   }
+}
 
-  try {
-    let query = 'SELECT * FROM activity_events WHERE user_id = ?';
-    let countQuery = 'SELECT COUNT(*) as total FROM activity_events WHERE user_id = ?';
-    const params = [userId];
-    const countParams = [userId];
-
-    // Add type filter if specified
-    if (type) {
-      query += ' AND type = ?';
-      countQuery += ' AND type = ?';
-      params.push(type);
-      countParams.push(type);
+/**
+ * Retrieve paginated activities for a specific user
+ * @param {string|number} userId - User ID
+ * @param {Object} options - Pagination options
+ * @param {number} [options.limit=10] - Number of activities to retrieve
+ * @param {string} [options.cursor] - Cursor for pagination
+ * @returns {Promise<Object>} Paginated activities result
+ * @throws {InvalidCursorError} When cursor is invalid
+ */
+async function getActivitiesForUser(userId, options = {}) {
+  const { limit = 10, cursor } = options;
+  
+  let cursorData = null;
+  
+  // Parse cursor if provided
+  if (cursor) {
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      cursorData = JSON.parse(decoded);
+      
+      // Validate cursor structure
+      if (!cursorData.id || !cursorData.created_at) {
+        throw new InvalidCursorError('Cursor missing required fields (id, created_at)');
+      }
+      
+      // Validate cursor data types
+      if (typeof cursorData.id !== 'number' || typeof cursorData.created_at !== 'string') {
+        throw new InvalidCursorError('Cursor contains invalid data types');
+      }
+      
+    } catch (err) {
+      if (err instanceof InvalidCursorError) {
+        throw err;
+      }
+      throw new InvalidCursorError('Invalid cursor format - must be valid base64 JSON');
     }
-
-    // Add ordering and pagination
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-
-    // Get the activity events
-    const activities = db.prepare(query).all(...params);
+  }
+  
+  try {
+    const activities = await getActivities(userId, { limit, cursor: cursorData });
     
-    // Get total count for pagination
-    const { total } = db.prepare(countQuery).get(...countParams);
+    // Generate next cursor if there are more results
+    let nextCursor = null;
+    const hasNext = activities.length === limit;
+    
+    if (hasNext && activities.length > 0) {
+      const lastActivity = activities[activities.length - 1];
+      const cursorPayload = {
+        id: lastActivity.id,
+        created_at: lastActivity.created_at
+      };
+      nextCursor = Buffer.from(JSON.stringify(cursorPayload)).toString('base64');
+    }
     
     return {
       activities,
-      pagination: {
-        limit,
-        offset,
-        total,
-        hasMore: offset + limit < total
-      }
+      limit,
+      hasNext,
+      nextCursor
     };
-  } catch (error) {
-    // Re-throw with 500 status if not already set
-    if (!error.status) {
-      error.status = 500;
-    }
-    throw error;
+  } catch (err) {
+    // Re-throw database errors as service errors
+    throw new Error(`Failed to retrieve activities: ${err.message}`);
   }
 }
 
 module.exports = {
-  getUserActivity
+  getActivitiesForUser,
+  InvalidCursorError
 };
