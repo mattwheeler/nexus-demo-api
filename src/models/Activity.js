@@ -1,57 +1,103 @@
 'use strict';
+const Database = require('better-sqlite3');
+const path = require('path');
 const { z } = require('zod');
 
-/**
- * Actor schema for activity events
- * @typedef {Object} Actor
- * @property {string} id - Unique identifier for the actor
- * @property {string} type - Type of the actor (e.g., 'user', 'system')
- * @property {string} [displayName] - Optional display name for the actor
- */
-const ActorSchema = z.object({
-  id: z.string().min(1, 'Actor id is required'),
-  type: z.string().min(1, 'Actor type is required'),
-  displayName: z.string().optional()
-});
+const db = new Database(path.join(__dirname, '../../demo.db'));
 
-/**
- * Activity schema for activity events
- * @typedef {Object} Activity
- * @property {string} id - Unique identifier for the activity
- * @property {string} type - Type of activity event
- * @property {string} timestamp - ISO-8601 UTC timestamp
- * @property {string} subjectUserId - ID of the user who is the subject of the activity
- * @property {Actor} actor - Actor who performed the activity
- */
+// Activity schema validation
 const ActivitySchema = z.object({
-  id: z.string().min(1, 'Activity id is required'),
-  type: z.string().min(1, 'Activity type is required'),
-  timestamp: z.string().datetime({ message: 'Timestamp must be a valid ISO-8601 UTC format' }),
-  subjectUserId: z.string().min(1, 'Subject user ID is required'),
-  actor: ActorSchema
+  user_id: z.number().positive(),
+  type: z.string().min(1),
+  description: z.string().optional()
 });
 
 /**
- * Validates activity data against the schema
- * @param {Object} activityData - The activity data to validate
- * @returns {Object} Validation result with success flag and data or error
+ * Get activities for a user with cursor-based pagination
+ * @param {number} userId - User ID
+ * @param {Object} options - Pagination options
+ * @param {string} options.cursor - Cursor token for pagination
+ * @param {number} options.limit - Number of results to return (default: 10)
+ * @returns {Promise<Object[]>} Array of activity events
  */
-function validateActivity(activityData) {
-  return ActivitySchema.safeParse(activityData);
+function getActivitiesForUser(userId, { cursor, limit = 10 } = {}) {
+  let query = `
+    SELECT id, user_id, type, description, created_at
+    FROM activity_events
+    WHERE user_id = ?
+  `;
+  const params = [userId];
+
+  // Add cursor condition if provided
+  if (cursor) {
+    const cursorTimestamp = parseCursor(cursor);
+    if (cursorTimestamp) {
+      query += ' AND created_at < ?';
+      params.push(cursorTimestamp);
+    }
+  }
+
+  query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
+  params.push(limit);
+
+  return Promise.resolve(
+    db.prepare(query).all(...params)
+  );
 }
 
 /**
- * Validates actor data against the schema
- * @param {Object} actorData - The actor data to validate
- * @returns {Object} Validation result with success flag and data or error
+ * Create a new activity event
+ * @param {Object} activity - Activity data
+ * @param {number} activity.user_id - User ID
+ * @param {string} activity.type - Activity type
+ * @param {string} [activity.description] - Activity description
+ * @returns {Promise<Object>} Created activity event
  */
-function validateActor(actorData) {
-  return ActorSchema.safeParse(actorData);
+function createActivity(activity) {
+  const validatedActivity = ActivitySchema.parse(activity);
+  
+  const stmt = db.prepare(`
+    INSERT INTO activity_events (user_id, type, description)
+    VALUES (?, ?, ?)
+  `);
+  
+  const result = stmt.run(
+    validatedActivity.user_id,
+    validatedActivity.type,
+    validatedActivity.description || null
+  );
+  
+  return Promise.resolve(
+    db.prepare('SELECT * FROM activity_events WHERE id = ?').get(result.lastInsertRowid)
+  );
+}
+
+/**
+ * Generate cursor token from timestamp
+ * @param {string} timestamp - ISO timestamp
+ * @returns {string} Base64 encoded cursor token
+ */
+function generateCursor(timestamp) {
+  return Buffer.from(timestamp).toString('base64');
+}
+
+/**
+ * Parse cursor token to extract timestamp
+ * @param {string} cursor - Base64 encoded cursor token
+ * @returns {string|null} Decoded timestamp or null if invalid
+ */
+function parseCursor(cursor) {
+  try {
+    return Buffer.from(cursor, 'base64').toString('utf8');
+  } catch (error) {
+    return null;
+  }
 }
 
 module.exports = {
-  ActivitySchema,
-  ActorSchema,
-  validateActivity,
-  validateActor
+  getActivitiesForUser,
+  createActivity,
+  generateCursor,
+  parseCursor,
+  ActivitySchema
 };
