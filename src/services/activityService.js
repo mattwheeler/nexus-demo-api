@@ -12,6 +12,34 @@ class InvalidCursorError extends Error {
 }
 
 /**
+ * Parse pagination parameters from query string
+ * @param {Object} query - Express query object
+ * @returns {Object} Parsed pagination options
+ * @throws {Error} When parameters are invalid
+ */
+function parsePaginationParams(query = {}) {
+  const { limit, cursor } = query;
+  
+  const options = {};
+  
+  // Parse limit
+  if (limit !== undefined) {
+    const parsedLimit = parseInt(limit, 10);
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new Error('Limit must be between 1 and 100');
+    }
+    options.limit = parsedLimit;
+  }
+  
+  // Parse cursor
+  if (cursor) {
+    options.cursor = cursor;
+  }
+  
+  return options;
+}
+
+/**
  * Retrieve paginated activities for a specific user
  * @param {string|number} userId - User ID
  * @param {Object} options - Pagination options
@@ -21,6 +49,12 @@ class InvalidCursorError extends Error {
  * @throws {InvalidCursorError} When cursor is invalid
  */
 async function getActivitiesForUser(userId, options = {}) {
+  // Validate user ID
+  const parsedUserId = parseInt(userId, 10);
+  if (isNaN(parsedUserId) || parsedUserId < 1) {
+    throw new Error('Valid user ID is required');
+  }
+  
   const { limit = 10, cursor } = options;
   
   let cursorData = null;
@@ -50,7 +84,7 @@ async function getActivitiesForUser(userId, options = {}) {
   }
   
   try {
-    const activities = await getActivities(userId, { limit, cursor: cursorData });
+    const activities = await getActivities(parsedUserId, { limit, cursor: cursorData });
     
     // Generate next cursor if there are more results
     let nextCursor = null;
@@ -77,7 +111,12 @@ async function getActivitiesForUser(userId, options = {}) {
   }
 }
 
+// Alias for backward compatibility
+const getUserActivities = getActivitiesForUser;
+
 module.exports = {
   getActivitiesForUser,
+  getUserActivities,
+  parsePaginationParams,
   InvalidCursorError
 };
