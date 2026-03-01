@@ -12,7 +12,13 @@ app.use('/users', usersRouter);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({ 
+    error: {
+      code: 'NOT_FOUND',
+      message: 'Endpoint not found',
+      timestamp: new Date().toISOString()
+    }
+  });
 });
 
 // ── Error handler ──────────────────────────────────────────────────
