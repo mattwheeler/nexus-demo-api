@@ -1,7 +1,6 @@
 'use strict';
 const express = require('express');
 const { usersRouter } = require('./routes/users');
-const { activityRouter } = require('./routes/activity');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -10,7 +9,6 @@ app.use(express.json());
 
 // ── Routes ────────────────────────────────────────────────────────
 app.use('/users', usersRouter);
-app.use('/users', activityRouter);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.use((_req, res) => {
