@@ -36,11 +36,10 @@ function formatActivityResponse(data, pagination) {
         if (typeof activity.metadata === 'string') {
           formatted.metadata = JSON.parse(activity.metadata);
         } else {
-          // If it's already an object, keep it as-is
           formatted.metadata = activity.metadata;
         }
       } catch (error) {
-        // If JSON parsing fails, keep the original string value
+        // If JSON parsing fails, keep as string
         formatted.metadata = activity.metadata;
       }
     }
