@@ -1,146 +1,91 @@
 'use strict';
 const { Activity } = require('../models/Activity');
+const { getUser } = require('../models/User');
+const { NotFoundError, DatabaseError } = require('../middleware/errorHandler');
 
 /**
- * Service class for handling activity-related business logic
+ * Activity service with pagination and error handling
  */
 class ActivityService {
   /**
-   * Retrieves activities for a specific user with cursor-based pagination
-   * @param {Object} params - Parameters for retrieving activities
-   * @param {number} params.userId - The ID of the user whose activities to retrieve
-   * @param {string} [params.cursor] - Cursor for pagination (optional)
-   * @param {number} [params.limit=10] - Number of activities to retrieve (defaults to 10)
-   * @returns {Promise<Object>} Object containing activities, nextCursor, and hasPrevious
+   * Get user activities with pagination
+   * @param {number} userId - User ID
+   * @param {Object} options - Pagination options
+   * @param {number} options.limit - Number of items per page
+   * @param {string} options.cursor - Cursor for pagination
+   * @param {string} options.order - Sort order (asc/desc)
+   * @returns {Promise<Object>} Activities with pagination info
    */
-  static async getUserActivities({ userId, cursor, limit = 10 }) {
+  static async getUserActivities(userId, options = {}) {
     try {
-      // Validate input parameters
-      if (!userId) {
-        throw new Error('User ID is required');
+      // Check if user exists
+      const user = await getUser(userId);
+      if (!user) {
+        throw new NotFoundError('User not found');
       }
 
-      // Ensure limit is within reasonable bounds
-      const sanitizedLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
-      
-      // Get activities with one extra to check if there are more results
+      const { limit = 10, cursor, order = 'desc' } = options;
+
+      // Get activities with pagination
       const activities = await Activity.findByUserId(userId, {
+        limit: limit + 1, // Get one extra to check if there are more
         cursor,
-        limit: sanitizedLimit + 1,
-        orderBy: 'timestamp',
-        direction: 'DESC'
+        order
       });
 
-      // Handle case where user has no activities
-      if (!activities || activities.length === 0) {
-        return {
-          activities: [],
-          nextCursor: null,
-          hasPrevious: !!cursor
-        };
-      }
+      // Determine if there are more results
+      const hasMore = activities.length > limit;
+      const items = hasMore ? activities.slice(0, -1) : activities;
 
-      // Check if there are more results available
-      const hasMore = activities.length > sanitizedLimit;
-      const returnedActivities = hasMore ? activities.slice(0, sanitizedLimit) : activities;
-
-      // Generate next cursor if there are more results
-      let nextCursor = null;
-      if (hasMore) {
-        const lastActivity = returnedActivities[returnedActivities.length - 1];
-        nextCursor = lastActivity.cursor;
-      }
+      // Get next cursor from last item
+      const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].cursor : null;
 
       return {
-        activities: returnedActivities,
-        nextCursor,
-        hasPrevious: !!cursor
+        data: items,
+        pagination: {
+          limit,
+          hasMore,
+          nextCursor,
+          total: items.length
+        }
       };
     } catch (error) {
-      // Re-throw with more context for debugging
-      throw new Error(`Failed to retrieve user activities: ${error.message}`);
+      if (error.isOperational) {
+        throw error;
+      }
+      
+      // Handle database errors
+      throw new DatabaseError('Failed to retrieve user activities');
     }
   }
 
   /**
-   * Retrieves a single page of activities with metadata about pagination state
-   * @param {Object} params - Parameters for pagination
-   * @param {number} params.userId - The ID of the user whose activities to retrieve
-   * @param {string} [params.cursor] - Cursor for pagination
-   * @param {number} [params.limit=10] - Number of activities per page
-   * @returns {Promise<Object>} Paginated result with metadata
+   * Create a new activity for a user
+   * @param {number} userId - User ID
+   * @param {Object} activityData - Activity data
+   * @returns {Promise<Object>} Created activity
    */
-  static async getPaginatedActivities({ userId, cursor, limit = 10 }) {
-    const result = await this.getUserActivities({ userId, cursor, limit });
-    
-    return {
-      data: result.activities,
-      pagination: {
-        nextCursor: result.nextCursor,
-        hasPrevious: result.hasPrevious,
-        hasNext: !!result.nextCursor,
-        limit: Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
-      },
-      meta: {
-        total: result.activities.length,
-        userId: parseInt(userId, 10)
-      }
-    };
-  }
-
-  /**
-   * Validates if a cursor is valid for a given user
-   * @param {number} userId - The user ID
-   * @param {string} cursor - The cursor to validate
-   * @returns {Promise<boolean>} True if cursor is valid, false otherwise
-   */
-  static async isValidCursor(userId, cursor) {
+  static async createActivity(userId, activityData) {
     try {
-      if (!cursor || !userId) {
-        return false;
+      // Check if user exists
+      const user = await getUser(userId);
+      if (!user) {
+        throw new NotFoundError('User not found');
       }
 
-      const activity = await Activity.findByCursor(cursor);
-      return activity && activity.user_id === parseInt(userId, 10);
-    } catch (error) {
-      // If there's an error checking the cursor, consider it invalid
-      return false;
-    }
-  }
-
-  /**
-   * Gets the first cursor for a user's activities (used for starting pagination)
-   * @param {number} userId - The user ID
-   * @returns {Promise<string|null>} The first cursor or null if no activities
-   */
-  static async getFirstCursor(userId) {
-    try {
-      const activities = await Activity.findByUserId(userId, {
-        limit: 1,
-        orderBy: 'timestamp',
-        direction: 'DESC'
+      const activity = await Activity.create({
+        user_id: userId,
+        ...activityData
       });
 
-      return activities && activities.length > 0 ? activities[0].cursor : null;
+      return activity;
     } catch (error) {
-      throw new Error(`Failed to get first cursor: ${error.message}`);
-    }
-  }
-
-  /**
-   * Gets activity count for a user
-   * @param {number} userId - The user ID
-   * @returns {Promise<number>} Number of activities for the user
-   */
-  static async getActivityCount(userId) {
-    try {
-      if (!userId) {
-        throw new Error('User ID is required');
+      if (error.isOperational) {
+        throw error;
       }
-
-      return await Activity.countByUserId(userId);
-    } catch (error) {
-      throw new Error(`Failed to get activity count: ${error.message}`);
+      
+      // Handle database errors
+      throw new DatabaseError('Failed to create activity');
     }
   }
 }
