@@ -24,34 +24,23 @@ router.get('/:userId', async (req, res, next) => {
     }
     
     // Parse pagination parameters
-    let paginationOptions;
-    try {
-      paginationOptions = parsePaginationParams(req.query);
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
-    }
+    const paginationOptions = parsePaginationParams(req.query);
     
-    // Get activities
+    // Get activities for the user
     const result = await getUserActivities(userId, paginationOptions);
     
-    // Format response
-    const response = {
-      activities: result.activities,
-      pagination: {
-        limit: result.limit,
-        hasNext: result.hasNext,
-        nextCursor: result.nextCursor
-      }
-    };
-    
-    res.json(response);
-    
+    res.json(result);
   } catch (err) {
     if (err instanceof InvalidCursorError) {
       return res.status(400).json({ error: err.message });
     }
+    
+    if (err.message.includes('Limit must be') || err.message.includes('Limit cannot exceed')) {
+      return res.status(400).json({ error: err.message });
+    }
+    
     next(err);
   }
 });
 
-module.exports = router;
+module.exports = { activitiesRouter: router };
