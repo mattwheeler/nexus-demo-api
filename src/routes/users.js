@@ -5,7 +5,7 @@ const { getUser, createUser } = require('../models/User');
 const { validateUserActivity } = require('../middleware/validateUserActivity');
 const { getUserActivities } = require('../services/userActivityService');
 const { formatActivityResponse } = require('../utils/formatActivityResponse');
-const { handleUserNotFound, handleDatabaseError, handleGenericError } = require('../utils/errorHandlers');
+const { handleUserNotFound, handleGenericError } = require('../utils/errorHandlers');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
@@ -41,15 +41,12 @@ router.get('/:user_id/activity', validateUserActivity, async (req, res, next) =>
     // Get user activities
     const data = await getUserActivities(userId, { limit, offset });
     
-    // Format the response
+    // Format response
     const response = formatActivityResponse(data, { limit, offset });
     
     res.status(200).json(response);
-  } catch (error) {
-    if (error.type === 'DATABASE_ERROR') {
-      return handleDatabaseError(res, error, 'retrieving user activities');
-    }
-    return handleGenericError(res, error, 'retrieving user activities');
+  } catch (err) {
+    return handleGenericError(res, err, 'retrieving user activities');
   }
 });
 
