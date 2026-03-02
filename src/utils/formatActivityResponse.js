@@ -32,14 +32,14 @@ function formatActivityResponse(data, pagination) {
     // Handle metadata field - parse if it's a JSON string, otherwise keep as-is
     if (activity.metadata) {
       try {
-        // If metadata is a string, try to parse it as JSON
+        // Try to parse as JSON if it's a string
         if (typeof activity.metadata === 'string') {
           formatted.metadata = JSON.parse(activity.metadata);
         } else {
           formatted.metadata = activity.metadata;
         }
       } catch (error) {
-        // If JSON parsing fails, keep as string
+        // If parsing fails, keep as string
         formatted.metadata = activity.metadata;
       }
     }
