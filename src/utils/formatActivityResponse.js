@@ -57,29 +57,6 @@ function formatActivityResponse(data, pagination) {
   };
 }
 
-/**
- * Formats empty activity response when no activities are found.
- * 
- * @param {Object} pagination - Pagination parameters
- * @param {number} pagination.limit - Items per page limit
- * @param {number} pagination.offset - Offset for pagination
- * @returns {Object} Formatted empty response object
- */
-function formatEmptyActivityResponse(pagination) {
-  const { limit, offset } = pagination;
-  
-  return {
-    activities: [],
-    pagination: {
-      limit,
-      offset,
-      total: 0,
-      hasMore: false
-    }
-  };
-}
-
 module.exports = {
-  formatActivityResponse,
-  formatEmptyActivityResponse
+  formatActivityResponse
 };
