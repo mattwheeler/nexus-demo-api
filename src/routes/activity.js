@@ -53,22 +53,9 @@ router.post('/:userId/activities',
         code: 'INVALID_USER_ID'
       });
     }
-
-    const { event_type, metadata } = req.body;
     
-    // Basic validation
-    if (!event_type) {
-      return res.status(400).json({
-        error: 'event_type is required',
-        code: 'VALIDATION_ERROR'
-      });
-    }
-
-    const activity = await ActivityService.createActivity(userId, {
-      event_type,
-      metadata
-    });
-
+    const activity = await ActivityService.createActivity(userId, req.body);
+    
     res.status(201).json({
       success: true,
       activity
