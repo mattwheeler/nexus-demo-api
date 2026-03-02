@@ -43,7 +43,7 @@ function up(db) {
 
 /**
  * Rollback migration
- * @param {Database} db - SQLite database instance
+ * @param {Database} db - SQLite database instance 
  */
 function down(db) {
   db.exec('DROP TRIGGER IF EXISTS update_activity_events_updated_at');
