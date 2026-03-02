@@ -1,10 +1,11 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
-const { ActivityService } = require('../services/activityService');
+const { ActivityController } = require('../controllers/activityController');
 const { 
   validateActivityRequest,
-  validateUserId 
+  validateUserId,
+  validateActivityEventData
 } = require('../middleware/activityValidation');
 const {
   activityErrorHandler,
@@ -16,47 +17,55 @@ const {
 router.use(activityRequestLogger);
 
 /**
- * GET /users/:userId/activities
+ * GET /users/:id/activity
+ * Main endpoint - Retrieve paginated activity events for a user
+ * This is the primary route specified in the task requirements
+ */
+router.get(
+  '/:id/activity',
+  validateActivityRequest,
+  asyncErrorHandler(ActivityController.getUserActivity)
+);
+
+/**
+ * GET /users/:id/activity/stats
+ * Retrieve activity statistics for a user
+ */
+router.get(
+  '/:id/activity/stats',
+  validateUserId,
+  asyncErrorHandler(ActivityController.getUserActivityStats)
+);
+
+/**
+ * POST /users/:id/activity
+ * Create a new activity event for a user
+ */
+router.post(
+  '/:id/activity',
+  validateUserId,
+  validateActivityEventData,
+  asyncErrorHandler(ActivityController.createUserActivity)
+);
+
+/**
+ * GET /users/:userId/activities (legacy route for backward compatibility)
  * Retrieve paginated activity events for a user
  */
 router.get(
   '/:userId/activities',
   validateActivityRequest,
-  asyncErrorHandler(async (req, res) => {
-    const { validatedUserId, validatedQuery } = req;
-    
-    const result = await ActivityService.getUserActivities(validatedUserId, validatedQuery);
-    
-    res.json({
-      success: true,
-      data: result,
-      timestamp: new Date().toISOString()
-    });
-  })
+  asyncErrorHandler(ActivityController.getUserActivity)
 );
 
 /**
- * GET /users/:userId/activities/stats
+ * GET /users/:userId/activities/stats (legacy route for backward compatibility)
  * Retrieve activity statistics for a user
  */
 router.get(
   '/:userId/activities/stats',
   validateUserId,
-  asyncErrorHandler(async (req, res) => {
-    const { validatedUserId } = req;
-    const { startDate, endDate } = req.query;
-    
-    const result = await ActivityService.getUserActivityStats(validatedUserId, {
-      startDate,
-      endDate
-    });
-    
-    res.json({
-      success: true,
-      data: result,
-      timestamp: new Date().toISOString()
-    });
-  })
+  asyncErrorHandler(ActivityController.getUserActivityStats)
 );
 
 // Apply activity-specific error handler to all routes in this router
