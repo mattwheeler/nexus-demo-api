@@ -26,19 +26,12 @@ function errorHandler(err, req, res, next) {
   // Determine status code
   const status = err.status || err.statusCode || 500;
   
-  // Create consistent error response format
-  const errorResponse = {
+  // Send error response
+  res.status(status).json({
     error: err.message || 'Internal Server Error',
-    type: 'GENERAL_ERROR',
+    type: 'SERVER_ERROR',
     timestamp: new Date().toISOString()
-  };
-  
-  // Add additional details for development
-  if (process.env.NODE_ENV === 'development') {
-    errorResponse.stack = err.stack;
-  }
-  
-  return res.status(status).json(errorResponse);
+  });
 }
 
 module.exports = { errorHandler };
