@@ -1,225 +1,166 @@
 'use strict';
-const { getActivityEventsByUser } = require('../models/ActivityEvent');
+const { getDatabase } = require('../models/database');
 const { getUser } = require('../models/User');
 
 /**
- * Service for handling activity events with cursor-based pagination
+ * Activity service for managing user activity events
+ * Provides methods for retrieving, creating, and managing activity data
  */
 class ActivityService {
   /**
-   * Fetch user activity events with cursor-based pagination
-   * @param {number} userId - The user ID to fetch activities for
-   * @param {Object} options - Pagination and filtering options
-   * @param {string} [options.cursor] - Cursor for pagination (ISO timestamp)
-   * @param {number} [options.limit=20] - Maximum number of events to return (1-100)
-   * @param {string} [options.eventType] - Filter by specific event type
-   * @returns {Promise<Object>} Paginated activity results
-   * @throws {Error} If user not found or invalid parameters
+   * Get activity events for a user with cursor-based pagination
+   * @param {number} userId - User ID to get activities for
+   * @param {Object} options - Query options
+   * @param {number} [options.limit=50] - Maximum number of events to return
+   * @param {string} [options.cursor] - Cursor for pagination (base64 encoded timestamp)
+   * @param {string} [options.type] - Filter by event type
+   * @returns {Promise<Object>} Activity response with events and pagination info
    */
-  static async getUserActivities(userId, options = {}) {
-    try {
-      // Validate and set defaults
-      const { cursor, limit = 20, eventType } = options;
-      
-      // Validate limit range
-      if (limit < 1 || limit > 100) {
-        const error = new Error('Limit must be between 1 and 100');
+  static async getActivity(userId, options = {}) {
+    const { limit = 50, cursor, type } = options;
+    
+    // Verify user exists first
+    const user = await getUser(userId);
+    if (!user) {
+      const error = new Error(`User with ID ${userId} not found`);
+      error.status = 404;
+      throw error;
+    }
+    
+    const db = getDatabase();
+    
+    // Build the query
+    let query = `
+      SELECT id, user_id, type, description, created_at
+      FROM activity_events
+      WHERE user_id = ?
+    `;
+    const params = [userId];
+    
+    // Add type filter if specified
+    if (type) {
+      query += ` AND type = ?`;
+      params.push(type);
+    }
+    
+    // Add cursor-based pagination
+    if (cursor) {
+      try {
+        const decodedCursor = Buffer.from(cursor, 'base64').toString('utf-8');
+        const cursorDate = new Date(decodedCursor).toISOString();
+        query += ` AND created_at < ?`;
+        params.push(cursorDate);
+      } catch (err) {
+        const error = new Error('Invalid cursor format');
         error.status = 400;
         throw error;
       }
-      
-      // Validate cursor format if provided
-      if (cursor && !this._isValidTimestamp(cursor)) {
-        const error = new Error('Invalid cursor format. Must be a valid ISO datetime string');
-        error.status = 400;
-        throw error;
-      }
-      
-      // Verify user exists
-      const user = await getUser(userId);
-      if (!user) {
-        const error = new Error(`User with ID ${userId} not found`);
-        error.status = 404;
-        throw error;
-      }
-      
-      // Fetch activities from the model layer
-      const result = await getActivityEventsByUser(userId, {
-        cursor,
+    }
+    
+    // Order by created_at DESC and limit
+    query += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit + 1); // Get one extra to check if there are more results
+    
+    const stmt = db.prepare(query);
+    const events = stmt.all(...params);
+    
+    // Check if there are more results
+    const hasMore = events.length > limit;
+    if (hasMore) {
+      events.pop(); // Remove the extra event
+    }
+    
+    // Generate next cursor from the last event
+    let nextCursor = null;
+    if (hasMore && events.length > 0) {
+      const lastEvent = events[events.length - 1];
+      nextCursor = Buffer.from(lastEvent.created_at).toString('base64');
+    }
+    
+    // Format response
+    return {
+      events: events.map(event => ({
+        id: event.id,
+        userId: event.user_id,
+        type: event.type,
+        description: event.description,
+        createdAt: event.created_at
+      })),
+      pagination: {
         limit,
-        eventType
-      });
-      
-      // Handle empty results
-      if (!result.events || result.events.length === 0) {
-        return {
-          events: [],
-          pagination: {
-            hasMore: false,
-            nextCursor: null,
-            limit
-          },
-          metadata: {
-            totalReturned: 0,
-            requestedAt: new Date().toISOString()
-          }
-        };
+        cursor,
+        nextCursor,
+        hasMore
       }
-      
-      // Format the response with enhanced pagination info
-      return {
-        events: result.events,
-        pagination: {
-          hasMore: result.hasMore,
-          nextCursor: result.nextCursor,
-          limit,
-          cursor: cursor || null
-        },
-        metadata: {
-          totalReturned: result.events.length,
-          requestedAt: new Date().toISOString(),
-          filters: eventType ? { eventType } : {}
-        }
-      };
-      
-    } catch (error) {
-      // Re-throw known errors with status codes
-      if (error.status) {
-        throw error;
-      }
-      
-      // Handle unexpected database or system errors
-      console.error('ActivityService.getUserActivities error:', error);
-      const serviceError = new Error('Failed to retrieve user activities');
-      serviceError.status = 500;
-      serviceError.originalError = error;
-      throw serviceError;
-    }
+    };
   }
   
   /**
-   * Get activity statistics for a user
-   * @param {number} userId - The user ID
-   * @param {Object} options - Options for statistics
-   * @param {string} [options.startDate] - Start date for statistics (ISO string)
-   * @param {string} [options.endDate] - End date for statistics (ISO string)
-   * @returns {Promise<Object>} Activity statistics
-   * @throws {Error} If user not found or invalid parameters
+   * Create a new activity event for a user
+   * @param {number} userId - User ID to create activity for
+   * @param {Object} eventData - Event data
+   * @param {string} eventData.type - Event type
+   * @param {string} [eventData.description] - Event description
+   * @returns {Promise<Object>} Created activity event
    */
-  static async getUserActivityStats(userId, options = {}) {
-    try {
-      const { startDate, endDate } = options;
-      
-      // Validate date formats if provided
-      if (startDate && !this._isValidTimestamp(startDate)) {
-        const error = new Error('Invalid startDate format. Must be a valid ISO datetime string');
-        error.status = 400;
-        throw error;
-      }
-      
-      if (endDate && !this._isValidTimestamp(endDate)) {
-        const error = new Error('Invalid endDate format. Must be a valid ISO datetime string');
-        error.status = 400;
-        throw error;
-      }
-      
-      // Verify user exists
-      const user = await getUser(userId);
-      if (!user) {
-        const error = new Error(`User with ID ${userId} not found`);
-        error.status = 404;
-        throw error;
-      }
-      
-      // Import the stats function from the model (it exists in ActivityEvent.js)
-      const { getActivityEventStats } = require('../models/ActivityEvent');
-      
-      const stats = await getActivityEventStats(userId, {
-        startDate,
-        endDate
-      });
-      
-      return {
-        ...stats,
-        metadata: {
-          userId,
-          dateRange: {
-            startDate: startDate || null,
-            endDate: endDate || null
-          },
-          generatedAt: new Date().toISOString()
-        }
-      };
-      
-    } catch (error) {
-      // Re-throw known errors with status codes
-      if (error.status) {
-        throw error;
-      }
-      
-      // Handle unexpected errors
-      console.error('ActivityService.getUserActivityStats error:', error);
-      const serviceError = new Error('Failed to retrieve activity statistics');
-      serviceError.status = 500;
-      serviceError.originalError = error;
-      throw serviceError;
-    }
-  }
-  
-  /**
-   * Validate if a string is a valid ISO timestamp
-   * @private
-   * @param {string} timestamp - Timestamp to validate
-   * @returns {boolean} True if valid ISO timestamp
-   */
-  static _isValidTimestamp(timestamp) {
-    if (typeof timestamp !== 'string') return false;
+  static async createActivity(userId, eventData) {
+    const { type, description } = eventData;
     
-    try {
-      const date = new Date(timestamp);
-      return date.toISOString() === timestamp;
-    } catch {
-      return false;
-    }
-  }
-  
-  /**
-   * Get the next cursor for pagination
-   * @param {Array} events - Array of events
-   * @returns {string|null} Next cursor or null if no more events
-   */
-  static _getNextCursor(events) {
-    if (!events || events.length === 0) {
-      return null;
-    }
-    
-    const lastEvent = events[events.length - 1];
-    return lastEvent.timestamp;
-  }
-  
-  /**
-   * Validate pagination parameters
-   * @private
-   * @param {Object} options - Pagination options
-   * @param {string} [options.cursor] - Cursor for pagination
-   * @param {number} [options.limit] - Limit for pagination
-   * @throws {Error} If parameters are invalid
-   */
-  static _validatePaginationParams(options) {
-    const { cursor, limit } = options;
-    
-    if (cursor !== undefined && !this._isValidTimestamp(cursor)) {
-      const error = new Error('Invalid cursor format. Must be a valid ISO datetime string');
-      error.status = 400;
+    // Verify user exists first
+    const user = await getUser(userId);
+    if (!user) {
+      const error = new Error(`User with ID ${userId} not found`);
+      error.status = 404;
       throw error;
     }
     
-    if (limit !== undefined && (typeof limit !== 'number' || limit < 1 || limit > 100)) {
-      const error = new Error('Limit must be a number between 1 and 100');
-      error.status = 400;
-      throw error;
-    }
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO activity_events (user_id, type, description)
+      VALUES (?, ?, ?)
+    `);
+    
+    const result = stmt.run(userId, type, description || null);
+    
+    // Return the created event
+    const createdEvent = db.prepare(`
+      SELECT id, user_id, type, description, created_at
+      FROM activity_events
+      WHERE id = ?
+    `).get(result.lastInsertRowid);
+    
+    return {
+      id: createdEvent.id,
+      userId: createdEvent.user_id,
+      type: createdEvent.type,
+      description: createdEvent.description,
+      createdAt: createdEvent.created_at
+    };
   }
 }
 
-module.exports = { ActivityService };
+/**
+ * Get activity events for a user (convenience function)
+ * @param {number} userId - User ID to get activities for
+ * @param {Object} options - Query options
+ * @returns {Promise<Object>} Activity response
+ */
+async function getActivity(userId, options = {}) {
+  return ActivityService.getActivity(userId, options);
+}
+
+/**
+ * Create activity event for a user (convenience function)
+ * @param {number} userId - User ID to create activity for
+ * @param {Object} eventData - Event data
+ * @returns {Promise<Object>} Created activity event
+ */
+async function createActivity(userId, eventData) {
+  return ActivityService.createActivity(userId, eventData);
+}
+
+module.exports = {
+  ActivityService,
+  getActivity,
+  createActivity
+};
