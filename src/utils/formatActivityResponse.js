@@ -29,17 +29,12 @@ function formatActivityResponse(data, pagination) {
       created_at: activity.created_at
     };
     
-    // Handle metadata field - parse if it's a JSON string, otherwise keep as-is
+    // Parse metadata if it exists and is valid JSON
     if (activity.metadata) {
       try {
-        // Try to parse as JSON if it's a string
-        if (typeof activity.metadata === 'string') {
-          formatted.metadata = JSON.parse(activity.metadata);
-        } else {
-          formatted.metadata = activity.metadata;
-        }
+        formatted.metadata = JSON.parse(activity.metadata);
       } catch (error) {
-        // If parsing fails, keep as string
+        // If metadata is not valid JSON, include as string
         formatted.metadata = activity.metadata;
       }
     }
