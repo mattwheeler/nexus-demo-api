@@ -17,6 +17,7 @@ const ActivityQuerySchema = z.object({
 
 /**
  * Validates userId parameter from request params
+ * Supports both 'id' and 'userId' parameter names for flexibility
  * Ensures the user ID is valid format and the user exists
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
@@ -24,8 +25,21 @@ const ActivityQuerySchema = z.object({
  */
 async function validateUserId(req, res, next) {
   try {
+    // Support both 'id' and 'userId' parameter names
+    const userIdParam = req.params.id || req.params.userId;
+    
+    if (!userIdParam) {
+      return res.status(400).json({
+        error: 'User ID parameter is required',
+        details: [{
+          path: 'userId',
+          message: 'User ID must be provided in the URL path'
+        }]
+      });
+    }
+    
     // Validate userId parameter format
-    const userIdResult = UserIdSchema.safeParse(req.params.userId);
+    const userIdResult = UserIdSchema.safeParse(userIdParam);
     
     if (!userIdResult.success) {
       return res.status(400).json({
