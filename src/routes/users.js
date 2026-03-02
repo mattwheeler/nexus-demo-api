@@ -13,20 +13,7 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** POST /users */
-router.post('/', async (req, res, next) => {
-  try {
-    const { name, email } = req.body;
-    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
-    const user = await createUser({ name, email });
-    res.status(201).json({ user });
-  } catch (err) { next(err); }
-});
-
-/**
- * GET /users/:id/activity
- * Retrieve activities for a specific user with pagination
- */
+/** GET /users/:id/activity */
 router.get('/:id/activity', async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id, 10);
@@ -42,7 +29,7 @@ router.get('/:id/activity', async (req, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Parse pagination parameters
+    // Parse pagination parameters with validation
     let paginationOptions;
     try {
       paginationOptions = parsePaginationParams(req.query);
@@ -53,15 +40,17 @@ router.get('/:id/activity', async (req, res, next) => {
     // Get activities
     const result = await getUserActivities(userId, paginationOptions);
     
-    // Return paginated response
-    res.json({
+    // Format response
+    const response = {
       activities: result.activities,
       pagination: {
         limit: result.limit,
         hasNext: result.hasNext,
         nextCursor: result.nextCursor
       }
-    });
+    };
+    
+    res.json(response);
     
   } catch (err) {
     if (err instanceof InvalidCursorError) {
@@ -69,6 +58,16 @@ router.get('/:id/activity', async (req, res, next) => {
     }
     next(err);
   }
+});
+
+/** POST /users */
+router.post('/', async (req, res, next) => {
+  try {
+    const { name, email } = req.body;
+    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+    const user = await createUser({ name, email });
+    res.status(201).json({ user });
+  } catch (err) { next(err); }
 });
 
 module.exports = { usersRouter: router };
