@@ -2,6 +2,9 @@
 const express = require('express');
 const router = express.Router();
 const { getUser, createUser } = require('../models/User');
+const { getActivity } = require('../services/activityService');
+const { validateActivityQuery } = require('../middleware/validateActivityQuery');
+const { activityErrorHandler, asyncErrorHandler } = require('../middleware/activityErrorHandler');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
@@ -21,5 +24,23 @@ router.post('/', async (req, res, next) => {
     res.status(201).json({ user });
   } catch (err) { next(err); }
 });
+
+/** GET /users/:id/activity */
+router.get('/:id/activity', 
+  validateActivityQuery,
+  asyncErrorHandler(async (req, res, next) => {
+    const userId = parseInt(req.params.id, 10);
+    const { limit, cursor, type } = req.query;
+    
+    const result = await getActivity(userId, {
+      limit: limit ? parseInt(limit, 10) : 50,
+      cursor,
+      type
+    });
+    
+    res.json(result);
+  }),
+  activityErrorHandler
+);
 
 module.exports = { usersRouter: router };
