@@ -24,21 +24,34 @@ router.get('/:userId', async (req, res, next) => {
     }
     
     // Parse pagination parameters
-    const paginationOptions = parsePaginationParams(req.query);
+    let paginationOptions;
+    try {
+      paginationOptions = parsePaginationParams(req.query);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     
-    // Fetch activities
+    // Get activities
     const result = await getUserActivities(userId, paginationOptions);
     
-    res.json(result);
-  } catch (error) {
-    if (error instanceof InvalidCursorError) {
-      return res.status(400).json({ error: error.message });
+    // Format response
+    const response = {
+      activities: result.activities,
+      pagination: {
+        limit: result.limit,
+        hasNext: result.hasNext,
+        nextCursor: result.nextCursor
+      }
+    };
+    
+    res.json(response);
+    
+  } catch (err) {
+    if (err instanceof InvalidCursorError) {
+      return res.status(400).json({ error: err.message });
     }
-    if (error.message.includes('Limit must be') || error.message.includes('Valid user ID')) {
-      return res.status(400).json({ error: error.message });
-    }
-    next(error);
+    next(err);
   }
 });
 
-module.exports = { activitiesRouter: router };
+module.exports = router;
