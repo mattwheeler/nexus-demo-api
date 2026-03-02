@@ -2,186 +2,104 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// Check if we're in a test environment and mock accordingly
-let db;
-if (process.env.NODE_ENV === 'test') {
-  // Mock database for testing
-  const mockUsers = new Map([
-    [1, { id: 1, name: 'John Doe', email: 'john@example.com', created_at: '2024-01-01T00:00:00.000Z' }],
-    [2, { id: 2, name: 'Jane Smith', email: 'jane@example.com', created_at: '2024-01-01T00:00:00.000Z' }]
-  ]);
-  
-  const mockActivities = new Map([
-    [1, { id: 1, user_id: 1, type: 'login', description: 'User logged in', created_at: '2024-01-01T10:00:00.000Z' }],
-    [2, { id: 2, user_id: 1, type: 'profile_update', description: 'User updated profile', created_at: '2024-01-01T11:00:00.000Z' }],
-    [3, { id: 3, user_id: 1, type: 'logout', description: 'User logged out', created_at: '2024-01-01T12:00:00.000Z' }],
-    [4, { id: 4, user_id: 2, type: 'login', description: 'User logged in', created_at: '2024-01-01T13:00:00.000Z' }]
-  ]);
-  
-  db = {
-    prepare: (query) => {
-      return {
-        get: (id) => {
-          if (query.includes('SELECT * FROM users WHERE id = ?')) {
-            return mockUsers.get(parseInt(id)) || null;
-          }
-          return null;
-        },
-        all: (...params) => {
-          if (query.includes('SELECT * FROM activity_events WHERE user_id = ?')) {
-            const userId = parseInt(params[0]);
-            const userActivities = Array.from(mockActivities.values())
-              .filter(activity => activity.user_id === userId)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            
-            // Handle pagination
-            let result = userActivities;
-            if (params.length > 1) {
-              const limit = parseInt(params[1]);
-              result = result.slice(0, limit);
-            }
-            if (params.length > 2 && params[2]) {
-              const cursor = params[2];
-              const cursorIndex = result.findIndex(activity => activity.id.toString() === cursor);
-              if (cursorIndex > -1) {
-                result = result.slice(cursorIndex + 1);
-              }
-            }
-            
-            return result;
-          }
-          return [];
-        },
-        run: () => ({ lastInsertRowid: 1 })
-      };
-    },
-    exec: () => {} // No-op for schema creation
-  };
-} else {
-  // Real database for non-test environments
-  const dbPath = path.join(__dirname, '../../demo.db');
-  db = new Database(dbPath);
-}
+const db = new Database(path.join(__dirname, '../../demo.db'));
 
 /**
- * Activity service for managing user activity events
+ * Service for managing activity events
+ * Provides methods for retrieving, creating, and managing user activity data
  */
 class ActivityService {
   /**
-   * Get user activity events with cursor-based pagination
-   * @param {number} userId - User ID
+   * Get activity events for a specific user with pagination and filtering
+   * @param {number} userId - User ID to get activities for
    * @param {Object} options - Query options
-   * @param {number} [options.limit=20] - Number of events to return
-   * @param {string} [options.cursor] - Cursor for pagination
-   * @param {string} [options.type] - Filter by activity type
-   * @returns {Promise<Object>} Activity events with pagination metadata
+   * @param {number} [options.limit=20] - Maximum number of events to return
+   * @param {string} [options.cursor] - ISO timestamp cursor for pagination
+   * @param {string} [options.eventType] - Filter by event type
+   * @returns {Promise<Object>} Activity events with pagination info
    */
-  static async getUserActivity(userId, options = {}) {
-    const { limit = 20, cursor, type } = options;
+  static async getActivities(userId, options = {}) {
+    const { limit = 20, cursor, eventType } = options;
     
-    // First check if user exists
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      const error = new Error(`User with ID ${userId} not found`);
-      error.status = 404;
-      throw error;
+    let query = `
+      SELECT id, user_id as userId, type, description, created_at as createdAt
+      FROM activity_events 
+      WHERE user_id = ?
+    `;
+    
+    const params = [userId];
+    
+    // Add event type filter if provided
+    if (eventType) {
+      query += ' AND type = ?';
+      params.push(eventType);
     }
     
-    try {
-      let query = 'SELECT * FROM activity_events WHERE user_id = ?';
-      const params = [userId];
-      
-      // Add type filter if specified
-      if (type) {
-        query += ' AND type = ?';
-        params.push(type);
-      }
-      
-      // Add cursor condition for pagination
-      if (cursor) {
-        query += ' AND id < ?';
-        params.push(cursor);
-      }
-      
-      // Order by id DESC for cursor-based pagination
-      query += ' ORDER BY id DESC';
-      
-      // Add limit
-      query += ' LIMIT ?';
-      params.push(limit + 1); // Fetch one extra to check if there are more
-      
-      const events = db.prepare(query).all(...params);
-      
-      // Check if there are more events
-      const hasNextPage = events.length > limit;
-      if (hasNextPage) {
-        events.pop(); // Remove the extra event
-      }
-      
-      // Get next cursor
-      const nextCursor = hasNextPage && events.length > 0 
-        ? events[events.length - 1].id.toString() 
-        : null;
-      
-      return {
-        data: events,
-        pagination: {
-          hasNextPage,
-          nextCursor,
-          limit
-        },
-        meta: {
-          userId,
-          totalReturned: events.length,
-          type: type || null
-        }
-      };
-    } catch (error) {
-      // Wrap database errors
-      const serviceError = new Error('Failed to retrieve user activity');
-      serviceError.status = 500;
-      serviceError.originalError = error;
-      throw serviceError;
+    // Add cursor-based pagination
+    if (cursor) {
+      query += ' AND created_at < ?';
+      params.push(cursor);
     }
+    
+    // Order by created_at DESC for newest first
+    query += ' ORDER BY created_at DESC';
+    
+    // Add limit + 1 to check if there are more results
+    query += ' LIMIT ?';
+    params.push(limit + 1);
+    
+    const events = db.prepare(query).all(...params);
+    
+    // Check if there are more results
+    const hasMore = events.length > limit;
+    if (hasMore) {
+      events.pop(); // Remove the extra record
+    }
+    
+    // Generate next cursor from the last event's timestamp
+    const nextCursor = hasMore && events.length > 0 ? events[events.length - 1].createdAt : null;
+    
+    return {
+      success: true,
+      events,
+      pagination: {
+        hasMore,
+        nextCursor,
+        limit
+      }
+    };
   }
   
   /**
    * Create a new activity event for a user
    * @param {number} userId - User ID
    * @param {Object} eventData - Event data
-   * @param {string} eventData.type - Event type
-   * @param {string} [eventData.description] - Event description
+   * @param {string} eventData.eventType - Type of event
+   * @param {string} [eventData.timestamp] - ISO timestamp (defaults to now)
+   * @param {Object} [eventData.metadata] - Additional event metadata
    * @returns {Promise<Object>} Created activity event
    */
-  static async createActivityEvent(userId, eventData) {
-    const { type, description } = eventData;
+  static async createActivity(userId, eventData) {
+    const { eventType, timestamp = new Date().toISOString(), metadata } = eventData;
     
-    // Check if user exists
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      const error = new Error(`User with ID ${userId} not found`);
-      error.status = 404;
-      throw error;
-    }
+    const stmt = db.prepare(`
+      INSERT INTO activity_events (user_id, type, description, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
     
-    try {
-      const result = db.prepare(
-        'INSERT INTO activity_events (user_id, type, description) VALUES (?, ?, ?)'
-      ).run(userId, type, description || null);
-      
-      // Fetch and return the created event
-      const createdEvent = db.prepare(
-        'SELECT * FROM activity_events WHERE id = ?'
-      ).get(result.lastInsertRowid);
-      
-      return createdEvent;
-    } catch (error) {
-      // Wrap database errors
-      const serviceError = new Error('Failed to create activity event');
-      serviceError.status = 500;
-      serviceError.originalError = error;
-      throw serviceError;
-    }
+    const result = stmt.run(userId, eventType, timestamp, timestamp);
+    
+    // Return the created event
+    const createdEvent = db.prepare(`
+      SELECT id, user_id as userId, type, description, created_at as createdAt
+      FROM activity_events 
+      WHERE id = ?
+    `).get(result.lastInsertRowid);
+    
+    return {
+      success: true,
+      event: createdEvent
+    };
   }
   
   /**
@@ -189,52 +107,33 @@ class ActivityService {
    * @param {number} userId - User ID
    * @returns {Promise<Object>} Activity statistics
    */
-  static async getUserActivityStats(userId) {
-    // Check if user exists
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      const error = new Error(`User with ID ${userId} not found`);
-      error.status = 404;
-      throw error;
-    }
+  static async getActivityStats(userId) {
+    const stats = db.prepare(`
+      SELECT 
+        COUNT(*) as totalEvents,
+        COUNT(DISTINCT type) as uniqueEventTypes,
+        MIN(created_at) as firstActivity,
+        MAX(created_at) as lastActivity
+      FROM activity_events 
+      WHERE user_id = ?
+    `).get(userId);
     
-    try {
-      const stats = db.prepare(`
-        SELECT 
-          COUNT(*) as total,
-          COUNT(CASE WHEN date(created_at) = date('now') THEN 1 END) as today,
-          COUNT(CASE WHEN date(created_at) >= date('now', '-7 days') THEN 1 END) as thisWeek,
-          COUNT(CASE WHEN date(created_at) >= date('now', '-30 days') THEN 1 END) as thisMonth
-        FROM activity_events 
-        WHERE user_id = ?
-      `).get(userId);
-      
-      const typeStats = db.prepare(`
-        SELECT type, COUNT(*) as count
-        FROM activity_events 
-        WHERE user_id = ?
-        GROUP BY type
-        ORDER BY count DESC
-      `).all(userId);
-      
-      return {
-        userId,
-        total: stats.total,
-        periods: {
-          today: stats.today,
-          thisWeek: stats.thisWeek,
-          thisMonth: stats.thisMonth
-        },
-        byType: typeStats
-      };
-    } catch (error) {
-      // Wrap database errors
-      const serviceError = new Error('Failed to retrieve activity statistics');
-      serviceError.status = 500;
-      serviceError.originalError = error;
-      throw serviceError;
-    }
+    const eventTypeCounts = db.prepare(`
+      SELECT type, COUNT(*) as count
+      FROM activity_events 
+      WHERE user_id = ?
+      GROUP BY type
+      ORDER BY count DESC
+    `).all(userId);
+    
+    return {
+      success: true,
+      stats: {
+        ...stats,
+        eventTypeCounts
+      }
+    };
   }
 }
 
-module.exports = { ActivityService };
+module.exports = ActivityService;
