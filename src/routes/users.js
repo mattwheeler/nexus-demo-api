@@ -2,9 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const { getUser, createUser } = require('../models/User');
-const { getActivity } = require('../services/activityService');
-const { validateActivityQuery } = require('../middleware/validateActivityQuery');
-const { activityErrorHandler, asyncErrorHandler } = require('../middleware/activityErrorHandler');
+const ActivityService = require('../services/ActivityService');
+const { validateActivityRequest, validateUserId, validateActivityQuery } = require('../middleware/activityValidation');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
@@ -26,21 +25,21 @@ router.post('/', async (req, res, next) => {
 });
 
 /** GET /users/:id/activity */
-router.get('/:id/activity', 
-  validateActivityQuery,
-  asyncErrorHandler(async (req, res, next) => {
-    const userId = parseInt(req.params.id, 10);
-    const { limit, cursor, type } = req.query;
+router.get('/:id/activity', validateUserId, validateActivityQuery, async (req, res, next) => {
+  try {
+    const userId = req.validatedUserId;
+    const queryParams = req.validatedQuery;
     
-    const result = await getActivity(userId, {
-      limit: limit ? parseInt(limit, 10) : 50,
-      cursor,
-      type
+    const result = await ActivityService.getActivities(userId, {
+      limit: queryParams.limit,
+      cursor: queryParams.cursor,
+      eventType: queryParams.eventType
     });
     
     res.json(result);
-  }),
-  activityErrorHandler
-);
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = { usersRouter: router };
