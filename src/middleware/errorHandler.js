@@ -36,10 +36,9 @@ function errorHandler(err, req, res, next) {
   // Add additional details for development
   if (process.env.NODE_ENV === 'development') {
     errorResponse.stack = err.stack;
-    errorResponse.details = err.details || [];
   }
   
-  res.status(status).json(errorResponse);
+  return res.status(status).json(errorResponse);
 }
 
 module.exports = { errorHandler };
