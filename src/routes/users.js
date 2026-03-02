@@ -2,6 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const { getUser, createUser } = require('../models/User');
+const { validateUserActivity } = require('../middleware/validateUserActivity');
+const { getUserActivities } = require('../services/userActivityService');
+const { formatActivityResponse } = require('../utils/formatActivityResponse');
+const { handleUserNotFound, handleGenericError } = require('../utils/errorHandlers');
 
 /** GET /users/:id */
 router.get('/:id', async (req, res, next) => {
@@ -20,6 +24,30 @@ router.post('/', async (req, res, next) => {
     const user = await createUser({ name, email });
     res.status(201).json({ user });
   } catch (err) { next(err); }
+});
+
+/** GET /users/:user_id/activity */
+router.get('/:user_id/activity', validateUserActivity, async (req, res, next) => {
+  try {
+    const userId = req.params.user_id;
+    const { limit, offset } = req.query;
+    
+    // Check if user exists first
+    const user = await getUser(userId);
+    if (!user) {
+      return handleUserNotFound(res, userId);
+    }
+    
+    // Get user activities
+    const data = await getUserActivities(userId, { limit, offset });
+    
+    // Format response
+    const response = formatActivityResponse(data, { limit, offset });
+    
+    res.status(200).json(response);
+  } catch (err) {
+    return handleGenericError(res, err, 'retrieving user activities');
+  }
 });
 
 module.exports = { usersRouter: router };
