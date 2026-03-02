@@ -15,6 +15,7 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id),
     type TEXT NOT NULL,
     description TEXT,
+    metadata TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
