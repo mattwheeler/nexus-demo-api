@@ -1,91 +1,53 @@
 'use strict';
 const { Activity } = require('../models/Activity');
-const { getUser } = require('../models/User');
-const { NotFoundError, DatabaseError } = require('../middleware/errorHandler');
 
 /**
- * Activity service with pagination and error handling
+ * Service class for handling activity-related business logic
  */
 class ActivityService {
   /**
-   * Get user activities with pagination
-   * @param {number} userId - User ID
-   * @param {Object} options - Pagination options
-   * @param {number} options.limit - Number of items per page
-   * @param {string} options.cursor - Cursor for pagination
-   * @param {string} options.order - Sort order (asc/desc)
-   * @returns {Promise<Object>} Activities with pagination info
+   * Get paginated activities for a user
+   * @param {number} userId - User ID to get activities for
+   * @param {Object} options - Query options
+   * @param {number} options.limit - Maximum number of activities to return
+   * @param {string} [options.cursor] - Cursor for pagination
+   * @param {string} [options.event_type] - Filter by event type
+   * @returns {Promise<Object>} Object containing activities and pagination info
    */
   static async getUserActivities(userId, options = {}) {
+    const { limit = 20, cursor, event_type } = options;
+    
     try {
-      // Check if user exists
-      const user = await getUser(userId);
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-
-      const { limit = 10, cursor, order = 'desc' } = options;
-
-      // Get activities with pagination
       const activities = await Activity.findByUserId(userId, {
         limit: limit + 1, // Get one extra to check if there are more
         cursor,
-        order
+        event_type
       });
 
-      // Determine if there are more results
       const hasMore = activities.length > limit;
-      const items = hasMore ? activities.slice(0, -1) : activities;
-
-      // Get next cursor from last item
-      const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].cursor : null;
-
-      return {
+      const items = hasMore ? activities.slice(0, limit) : activities;
+      
+      const result = {
         data: items,
         pagination: {
           limit,
-          hasMore,
-          nextCursor,
-          total: items.length
+          has_more: hasMore
         }
       };
+
+      // Add next cursor if there are more items
+      if (hasMore && items.length > 0) {
+        result.pagination.next_cursor = items[items.length - 1].cursor;
+      }
+
+      // Add current cursor if provided
+      if (cursor) {
+        result.pagination.cursor = cursor;
+      }
+
+      return result;
     } catch (error) {
-      if (error.isOperational) {
-        throw error;
-      }
-      
-      // Handle database errors
-      throw new DatabaseError('Failed to retrieve user activities');
-    }
-  }
-
-  /**
-   * Create a new activity for a user
-   * @param {number} userId - User ID
-   * @param {Object} activityData - Activity data
-   * @returns {Promise<Object>} Created activity
-   */
-  static async createActivity(userId, activityData) {
-    try {
-      // Check if user exists
-      const user = await getUser(userId);
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-
-      const activity = await Activity.create({
-        user_id: userId,
-        ...activityData
-      });
-
-      return activity;
-    } catch (error) {
-      if (error.isOperational) {
-        throw error;
-      }
-      
-      // Handle database errors
-      throw new DatabaseError('Failed to create activity');
+      throw new Error(`Failed to fetch user activities: ${error.message}`);
     }
   }
 }
